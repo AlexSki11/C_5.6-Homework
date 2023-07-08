@@ -5,7 +5,16 @@ class PosError(Exception):
     pass
 
 class ShipError(PosError):
-    pass
+    def __str__(self):
+        return "Слишком близко"
+
+class PosRange(PosError):
+    def __str__(self):
+        return "Координаты были введены неверно, не хватило места на поле"
+
+class PosAlso(PosError):
+    def __str__(self):
+        return "Нельзя вводить координаты 2-а раза"
 
 
 class Pos:
@@ -20,6 +29,7 @@ class Pos:
 
 class Ship:
     def __init__(self, pos: Pos, w, h):
+        self.start_pos = pos
         self.list_pos = []
         self.w = w
         self.h = h
@@ -49,7 +59,7 @@ class Ship:
 
     def __ne__(self, other):
         for pos in other.list_pos:
-            if pos in self.list_pos:
+            if not pos in self.list_pos:
                 return True
 
     def damage(self, pos):
@@ -65,6 +75,9 @@ class Player:
         self.list_hit = []
         self.table = [["O"] * w for _ in range(h)]
         self.table_hit = [["O"] * w for _ in range(h)]
+        self.status_attack = ""
+        self.verb = False
+
 
 
     def damage(self, pos):
@@ -72,12 +85,20 @@ class Player:
         ship_check = Ship(pos, 1, 1)
         self.edit_table(pos)
         for n,ship in enumerate(self.list_ship):
-            if ship != ship_check:
+            if not ship != ship_check:
                 ship.damage(pos)
                 self.list_ship[n] = ship
+                self.status_attack = "Попал"
                 if not ship.check_ship():
+                    if self.verb:
+                        self.edit_tableDestroid(ship)
                     self.list_ship.remove(ship)
-                break
+                    self.status_attack = "Корабль уничтожен"
+                    return
+                return
+        self.status_attack = "Мимо"
+
+
 
     def table_app(self):
         for ship in self.list_ship:
@@ -87,13 +108,52 @@ class Player:
 
 
 
+
+
     def edit_table(self, pos):
-        if self.table[pos.x][pos.y] == chr(9632):
+        if self.table[pos.x][pos.y] == chr(9632) or self.table[pos.x][pos.y] == "X":
             self.table[pos.x][pos.y] = "X"
             self.table_hit[pos.x][pos.y] = "X"
         else:
             self.table[pos.x][pos.y] = "T"
             self.table_hit[pos.x][pos.y] = "T"
+
+    def edit_tableDestroid(self, ship:Ship):
+        start_pos = ship.start_pos
+        x = ship.start_pos.x
+        y = ship.start_pos.y
+        width = ship.w
+        height = ship.h
+
+        for w in range(0, width):
+            if y - 1 != -1:
+                self.edit_table(Pos(x + w, y - 1))
+
+            if y + 1 < self.h:
+                self.edit_table(Pos(x + w, y + 1))
+
+
+        if x - 1 != -1:
+            self.edit_table(Pos(x - 1, y))
+
+        if x + width < self.w:
+            self.edit_table(Pos(x+width, y))
+
+
+        for h in range(0, height):
+            if x - 1 != -1:
+                self.edit_table(Pos(x - 1, y + h))
+
+            if x + 1 < self.h:
+                self.edit_table(Pos(x + 1, y + h))
+
+
+        if y - 1 != -1:
+            self.edit_table(Pos(x, y - 1))
+
+        if y + height < self.h:
+            self.edit_table(Pos(x, y + height))
+
 
     def add_ship(self, ship):
         for pos in ship.list_pos:
@@ -108,7 +168,12 @@ class Player:
     def check_pos(self, pos):
         if (pos.x >= self.w or pos.y >= self.h or
                 pos.x<0 or pos.y<0):
-            raise PosError
+            raise PosRange
+        if pos in self.list_hit:
+            raise PosAlso
+
+    def add_hit(self, pos):
+        self.list_hit.append(pos)
 
     def check_ship(self, ship):
         if ship in self.list_ship:
@@ -120,6 +185,7 @@ class Bot(Player):
         super().__init__(w, h)
         self.list_ship = Bot.rand_ship(list_hitPoint, w, h)
         self.table_app()
+
 
 
     @staticmethod
@@ -159,12 +225,15 @@ class Bot(Player):
                 self.list_hit.append(pos)
                 return pos
 
+
+
 class GameEvent:
     EVENT_NONE = 0
     EVENT_APP = 1
     EVENT_HIT = 2
     EVENT_BOT_HIT = 3
     EVENT_RAND = 4
+
 
     def __init__(self, type, data):
         self.type = type
@@ -192,6 +261,8 @@ class GameLogic:
         if event.type == GameEvent.EVENT_APP:
             self.player.add_ship(event.data)
         elif event.type == GameEvent.EVENT_HIT:
+            self.player.check_pos(event.data)
+            self.player.add_hit(event.data)
             self.bot.damage(event.data)
         elif event.type == GameEvent.EVENT_BOT_HIT:
             data = self.bot.hit()
@@ -200,6 +271,7 @@ class GameLogic:
             list_ship = Bot.rand_ship(self.list_hitPoint, self.w, self.h)
             for ship in list_ship:
                 self.player.add_ship(ship)
+
 
     def get_table(self):
         return self.player.table
@@ -213,7 +285,14 @@ class GameLogic:
     def bot_win(self):
         return self.player.check_listShip()
 
+    def get_statusAttack(self):
+        return self.bot.status_attack
 
+    def set_verb(self):
+        if not self.bot.verb:
+            self.bot.verb = True
+        else:
+            self.bot.verb = False
 
 class ConsoleGUI:
 
@@ -222,30 +301,21 @@ class ConsoleGUI:
 
 
     def run(self):
-        try:
-            game_continue = True
-            print("МОРСКОЙ БОЙ")
-            print(f"Расположите корабли на поле размером {self.logic.w}x{self.logic.h}")
-
-            self.phase_1(self.choise_orientation())
-            self.phase_2()
+        game_continue = True
+        print("МОРСКОЙ БОЙ")
 
 
 
+        self.phase_0()
+        print(f"Расположите корабли на поле размером {self.logic.w}x{self.logic.h}")
+        self.phase_1(self.choise_orientation())
+        self.phase_2()
 
 
-        except ShipError:
-            print("Ошибка!!!")
-            print("Корабли слишком близко друг к другу")
-        except PosError:
-            print("Ошибка!!!")
-            print("Координаты были введены неверно, не хватило места на поле")
-        except ValueError:
-            print("Ошибка!!!")
-            print("Координаты нужно вводить так")
-            print(":0 2")
-            print(":3 3")
 
+
+
+# Можно было-бы воспользоваться str
     def print_table(self, table):
         print("   |", end="")
 
@@ -260,6 +330,23 @@ class ConsoleGUI:
                 print(table[x][y], end=" | ")
             print()
         print()
+
+    def phase_0(self):
+        print("Включить помощь?")
+        print("Показывать соседние клетки рядом с подбитыми кораблями")
+        print("Эти клетки не будут считаться как задетые")
+        print("1 - Да")
+        print("2 - Нет")
+        i = input(":")
+        while i != "1" and i != "2":
+            print("Ошибка! Повторите")
+            i = input(": ")
+
+        if i == "1":
+            self.logic.set_verb()
+
+
+
 
     def phase_1(self,x):
         if x == "4":
@@ -286,9 +373,11 @@ class ConsoleGUI:
         print("Пример")
         print(":0 0")
         print(":3 5")
+        print("Нельзя стрелять 2-а раза в одно и тоже место")
         game_continue = True
         while game_continue:
             self.attack()
+
             if self.logic.player_win():
                 text = "Player WIN!"
                 game_continue = False  # break
@@ -298,6 +387,7 @@ class ConsoleGUI:
                 game_continue = False
             self.print_table(self.logic.get_table())
             self.print_table(self.logic.get_tableHit())
+            print(self.logic.get_statusAttack())
 
         print(text)
 
@@ -315,45 +405,85 @@ class ConsoleGUI:
 
     def add_ship(self):
         for count in self.logic.list_hitPoint:
-            print(f"Корабля размером {count}")
+            print(f"Корабль размером {count}")
             if count != 1:
                 print("Выберите ориентацию")
                 print("1 - горизонтальная")
                 print("2 - вертикальная")
             i = ""
-            while (i != "1" and i != "2"):
-                i = input(":")
-            print(f"Введите координаты")
-            x, y = list(map(int, input(":").split()))
-            pos = Pos(x, y)
-            if i == "1":
-                ship = Ship(pos, w=count, h=1)
-            else:
-                ship = Ship(pos, w=1, h=count)
+            while True:
+                try:
+                    while (i != "1" and i != "2" and count != 1):
+                        i = input(":")
+                    print(f"Введите координаты")
+                    x, y = list(map(int, input(":").split()))
+                    pos = Pos(x, y)
+                    if i == "1":
+                        ship = Ship(pos, w=count, h=1)
+                        event = GameEvent(GameEvent.EVENT_APP, ship)
+                        self.logic.event_process(event)
+                        self.print_table(self.logic.get_table())
+                        break
+                    else:
+                        ship = Ship(pos, w=1, h=count)
 
-            event = GameEvent(GameEvent.EVENT_APP, ship)
-            self.logic.event_process(event)
-            self.print_table(self.logic.get_table())
+                        event = GameEvent(GameEvent.EVENT_APP, ship)
+                        self.logic.event_process(event)
+                        self.print_table(self.logic.get_table())
+                        break
+                except ShipError as e:
+                    print(e)
+                    continue
+                except ValueError:
+                    print("Неверно повторите ввод")
+                    print("Пример:3 2")
+                    continue
+
 
     def add_ship_w(self):
         for w in self.logic.list_hitPoint:
             print(f"Введите координаты для корабля размером {w}")
-            x, y = list(map(int, input(":").split()))
-            pos = Pos(x, y)
-            ship = Ship(pos, w=w, h=1)
-            event = GameEvent(GameEvent.EVENT_APP, ship)
-            self.logic.event_process(event)
-            self.print_table(self.logic.get_table())
+            while True:
+                try:
+                    x, y = list(map(int, input(":").split()))
+                    pos = Pos(x, y)
+                    ship = Ship(pos, w=w, h=1)
+                    event = GameEvent(GameEvent.EVENT_APP, ship)
+                    self.logic.event_process(event)
+                    self.print_table(self.logic.get_table())
+                except ShipError as e:
+                    print(e)
+                    continue
+                except PosError as e:
+                    print(e)
+                    continue
+                except ValueError:
+                    print("Неверно повторите ввод")
+                    print("Пример:3 2")
+                    continue
 
     def add_ship_h(self):
         for h in self.logic.list_hitPoint:
             print(f"Введите координаты для корабля размером {h}")
-            x, y = list(map(int, input(":").split()))
-            pos = Pos(x, y)
-            ship = Ship(pos, w=1, h=h)
-            event = GameEvent(GameEvent.EVENT_APP, ship)
-            self.logic.event_process(event)
-            self.print_table(self.logic.get_table())
+            while True:
+                try:
+                    x, y = list(map(int, input(":").split()))
+                    pos = Pos(x, y)
+                    ship = Ship(pos, w=1, h=h)
+                    event = GameEvent(GameEvent.EVENT_APP, ship)
+                    self.logic.event_process(event)
+                    self.print_table(self.logic.get_table())
+                    break
+                except ShipError as e:
+                    print(e)
+                    continue
+                except PosError as e:
+                    print(e)
+                    continue
+                except ValueError:
+                    print("Неверно повторите ввод")
+                    print("Пример:3 2")
+                    continue
 
     def add_ship_rand(self):
         event = GameEvent(GameEvent.EVENT_RAND, data = None)
@@ -361,9 +491,24 @@ class ConsoleGUI:
         self.print_table(self.logic.get_table())
 
     def attack(self):
-        x, y = list(map(int, input(":").split()))
-        event = GameEvent(GameEvent.EVENT_HIT, data = Pos(x, y))
-        self.logic.event_process(event)
+
+        while True:
+            try:
+                x, y = list(map(int, input(":").split()))
+                event = GameEvent(GameEvent.EVENT_HIT, data=Pos(x, y))
+                self.logic.event_process(event)
+                break
+            except PosAlso as e:
+                print(e)
+                continue
+            except PosError as e:
+                print(e)
+                continue
+            except ValueError:
+                print("Ошибка, повторите ввод")
+                continue
+
+
 
     def attack_bot(self):
         event = GameEvent(GameEvent.EVENT_BOT_HIT, data = None)
